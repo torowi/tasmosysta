@@ -1,57 +1,64 @@
 import mqtt
 
 class SerialTest
-  var ALIVE_TIMEOUT
   var ser, buffer, topic_prefix
   var collecttime, last_values, topics
   var last_serial_time, alive_state
 
   def init()
-    self.ALIVE_TIMEOUT = 30000
     self.ser = serial(8, -1, 9600, serial.SERIAL_8N1)
-    self.topic_prefix = "systasolar"
+    self.topic_prefix = "systasolar" + "/"
     self.buffer = []
     self.collecttime = tasmota.millis()
     self.last_serial_time = self.collecttime
     self.alive_state = 0
     self.last_values = {}
 
+    # topics: [Pfad, Typ+Format, Offset, Größe]
     self.topics = [
-      ["/TSA", "float", "%.1f", 10.0, 4],
-      ["/TSE", "float", "%.1f", 10.0, 6],
-      ["/TWU", "float", "%.1f", 10.0, 8],
-      ["/TW2", "float", "%.1f", 10.0, 10],
-      ["/PSO", "int", nil, 1.0, 12],
-      ["/Status", "int", nil, 1.0, 14],
-      ["/Stoercode", "int", nil, 1.0, 15],
-      ["/Frostschutz", "int", nil, 1.0, 16],
-      ["/Ctr", "int", nil, 1.0, 17],
-      ["/Stunde", "int", nil, 1.0, 18],
-      ["/Minute", "int", nil, 1.0, 19],
-      ["/Tag", "int", nil, 1.0, 20],
-      ["/Monat", "int", nil, 1.0, 21],
-      ["/kWhTag", "int", nil, 1.0, 24],
-      ["/kWhSumme", "int", nil, 1.0, 28]
+      ["TSA", "float10", 4, 2],
+      ["TSE", "float10", 6, 2],
+      ["TWU", "float10", 8, 2],
+      ["TW2", "float10", 10, 2],
+      ["PSO", "hex", 12, 1],
+      ["Status", "hex", 14, 1],
+      ["Stoercode", "hex", 15, 1],
+      ["Frostschutz", "hex", 16, 1],
+      ["Ctr", "hex", 17, 1],
+      ["Stunde", "int", 18, 1],
+      ["Minute", "int", 19, 1],
+      ["Tag", "int", 20, 1],
+      ["Monat", "int", 21, 1],
+      ["kWhTag", "hex", 24, 4],
+      ["kWhSumme", "hex", 28, 4]
     ]
 
-    for idx : 0 .. self.topics.size() - 1
-      var topic = self.topics[idx][0]
-      self.last_values[topic] = nil
+    for idx : 0 .. size(self.topics) - 1
+      self.last_values[self.topics[idx][0]] = nil
     end
 
     tasmota.set_timer(0, /->self.loop())
   end
 
   def loop()
-    self.serialpoll()
-    self.process_buffer()
-
-    if tasmota.millis() - self.last_serial_time > self.ALIVE_TIMEOUT && self.alive_state != 0
-      mqtt.publish(self.topic_prefix + "/alive", "0")
-      self.alive_state = 0
+    if self.buffer.size() > 0
+      self.process_buffer()
     end
-
+    self.serialpoll()
+    self.update_alive_state()
     tasmota.set_timer(50, /->self.loop())
+  end
+
+  def update_alive_state()
+    # Wenn mehr als 30 Sekunden vergangen sind und der Zustand nicht bereits 0 ist, setze "alive" auf 0
+    if tasmota.millis() - self.last_serial_time > 30000 && self.alive_state != 0
+      mqtt.publish(self.topic_prefix + "alive", "0")
+      self.alive_state = 0
+    # Wenn neue Daten empfangen werden, setze den Zustand auf 1
+    elif tasmota.millis() - self.last_serial_time <= 30000 && self.alive_state != 1
+      mqtt.publish(self.topic_prefix + "alive", "1")
+      self.alive_state = 1
+    end
   end
 
   def serialpoll()
@@ -60,84 +67,79 @@ class SerialTest
       if block && block[0] == 0xFC && block.size() == block[1] + 3
         self.buffer.push(block)
         self.last_serial_time = tasmota.millis()
-        if self.alive_state != 1
-          mqtt.publish(self.topic_prefix + "/alive", "1")
-          self.alive_state = 1
-        end
       end
     end
   end
 
   def process_buffer()
-    if self.buffer.size() == 0
+    if size(self.buffer) == 0
       return
     end
 
     var block = self.buffer.pop(0)
+    var new_values = {}
 
-    var current_values = {}
-
-    for idx : 0 .. self.topics.size() - 1
-      var topic = self.topics[idx][0]
-      var typ = self.topics[idx][1]
-      var fmt = self.topics[idx][2]
-      var div = self.topics[idx][3]
-      var offset = self.topics[idx][4]
-
+    for idx : 0 .. size(self.topics) - 1
+      var entry = self.topics[idx]
+      var topic = entry[0]
+      var fmt = entry[1]
+      var offset = entry[2]
+      var length = entry[3]  # Anzahl der Bytes, die für den Wert ausgelesen werden müssen
       var value
-      if topic == "/kWhTag" || topic == "/kWhSumme"
-        value = (block[offset] << 24) + (block[offset+1] << 16) + (block[offset+2] << 8) + block[offset+3]
+
+      # Berechnung des Wertes basierend auf der Länge
+      if length == 1
+        value = block[offset]  # 1 Byte Wert
+      elif length == 2
+        value = (block[offset] << 8) + block[offset + 1]  # 2 Bytes Wert
+      elif length == 4
+        value = (block[offset] << 24) + (block[offset + 1] << 16) + (block[offset + 2] << 8) + block[offset + 3]  # 4 Bytes Wert
       else
-        value = block[offset]
-        if topic == "/TSA" || topic == "/TSE" || topic == "/TWU" || topic == "/TW2"
-          value = (block[offset] << 8) + block[offset+1]
-        end
+        value = nil  # Falls es eine unerwartete Länge gibt, setze den Wert auf nil
       end
 
-      # Für Stunde/Minute/Tag/Monat hex-dekodieren
-      if topic == "/Stunde" || topic == "/Minute" || topic == "/Tag" || topic == "/Monat"
-        value = int(str("%02X", value))
+      # Formatierung des Wertes
+      if fmt == "float10"
+        value = value / 10.0  # Formatierung für float10
+      elif fmt == "hex"
+        value = int(format("%02X", value))  # Formatierung für Hex
+      elif fmt == "int"
+        value = int(value)  # Formatierung für Integer
       end
 
-      # Divisor anwenden, falls nötig
-      if div != 1.0
-        value = value / div
-      end
-
-      current_values[topic] = value
+      new_values[topic] = value
     end
 
-    # Wenn sich die Minute geändert hat → alles publishen
-    if self.last_values["/Minute"] != current_values["/Minute"]
-      for idx : 0 .. self.topics.size() - 1
+    # Update der gespeicherten Werte und Überprüfung auf Änderungen
+    if self.last_values["Minute"] != new_values["Minute"]
+      for idx : 0 .. size(self.topics) - 1
         var topic = self.topics[idx][0]
-        self.publish_value(topic, current_values[topic])
-        self.last_values[topic] = current_values[topic]
+        self.last_values[topic] = new_values[topic]
       end
+      self.send_all_values()
       return
     end
 
-    # Einzelne Änderungen publishen
-    for idx : 0 .. self.topics.size() - 1
+    for idx : 0 .. size(self.topics) - 1
       var topic = self.topics[idx][0]
-      if self.last_values[topic] != current_values[topic]
-        self.publish_value(topic, current_values[topic])
-        self.last_values[topic] = current_values[topic]
-      end
+      var fmt = self.topics[idx][1]
+      self.check_and_publish(topic, new_values[topic], fmt)
     end
   end
 
-  def publish_value(topic, value)
-    for idx : 0 .. self.topics.size() - 1
-      if self.topics[idx][0] == topic
-        var fmt = self.topics[idx][2]
-        if fmt
-          mqtt.publish(self.topic_prefix + topic, str(fmt, value))
-        else
-          mqtt.publish(self.topic_prefix + topic, str(value))
-        end
-        break
-      end
+  def check_and_publish(topic, value, fmt)
+    if self.last_values[topic] != value
+      mqtt.publish(self.topic_prefix + topic, str(value))
+      self.last_values[topic] = value
+    end
+  end
+
+  def send_all_values()
+    for idx : 0 .. size(self.topics) - 1
+      var topic = self.topics[idx][0]
+      var fmt = self.topics[idx][1]
+      var value = self.last_values[topic]
+      mqtt.publish(self.topic_prefix + topic, str(value))
     end
   end
 end
