@@ -28,8 +28,8 @@ It reads system values via a serial interface and publishes them as MQTT message
 ## Installation
 
 1. Flash your ESP32 device with [Tasmota32]
-2. Upload the Berry script `tasmosysta.be` via **"Manage File System"** menu
-3. Enable `tasmosysta.be` in your `autoexec.be`
+2. Upload the Berry script `systasolar.be` via **"Manage File System"** menu
+3. Enable `systasolar.be` in your `autoexec.be`
 4. Connect the SystaBus converter to GPIO (Default 8)
 5. Script will start automatically after restart and begin publishing MQTT messages
 
