@@ -28,7 +28,8 @@ class SerialTest
       ["TSE", "float10", 6, 2, "°C"],
       ["TWU", "float10", 8, 2, "°C"],
       ["TW2", "float10", 10, 2, "°C"],
-      ["PSO", "hex", 12, 1, "P"],
+      ["PSO", "hex", 12, 1, "%"],
+      ["ULV", "hex", 13, 1, ""],
       ["Status", "hex", 14, 1, ""],
       ["Stoercode", "hex", 15, 1, ""],
       ["Frostschutz", "hex", 16, 1, ""],
@@ -37,8 +38,10 @@ class SerialTest
       ["Minute", "int", 19, 1, ""],
       ["Tag", "int", 20, 1, ""],
       ["Monat", "int", 21, 1, ""],
+      ["Fehlzirk", "hex", 22, 2, ""],      
       ["kWhTag", "hex", 24, 4, "kWh"],
-      ["kWhSumme", "hex", 28, 4, "kWh"]
+      ["kWhSumme", "hex", 28, 4, "kWh"],
+      ["Jahr", "int", 32, 1, ""]
     ]
 
     for idx : 0 .. size(self.topics) - 1
